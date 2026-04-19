@@ -919,50 +919,41 @@ function closeModal(modalId) {
     document.getElementById(modalId).style.display = 'none';
 }
 
-// Search functions with better fallback handling
 async function searchMolecule() {
     const input = document.getElementById('search-input').value.trim();
-    if (!input) {
-        alert('Please enter a molecule name');
-        return;
-    }
+    if (!input) return;
     
-    // Show loading state
     const searchButton = document.querySelector('#search-modal .search-button');
     searchButton.textContent = 'Searching...';
     searchButton.disabled = true;
     
-    // First check local database for common compounds
-    const localResult = searchLocalDatabase(input, 'basic');
-    if (localResult) {
-        loadLocalMolecule(localResult, 'basic');
-        searchButton.textContent = 'Search PubChem Database';
-        searchButton.disabled = false;
-        closeModal('search-modal');
-        return;
-    }
-    
     try {
-        // Try PubChem API (will likely fail due to CORS in browser)
-        const nameResponse = await fetch(`https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/name/${encodeURIComponent(input)}/cids/JSON`);
+        // Step 1: Find the CID
+        const nameResponse = await fetch(`/api/proxy?name=${encodeURIComponent(input)}`);
+        const nameData = await nameResponse.json();
         
-        if (!nameResponse.ok) {
-            throw new Error('CORS or molecule not found');
+        if (nameData.IdentifierList && nameData.IdentifierList.CID) {
+            const cid = nameData.IdentifierList.CID[0];
+            
+            // Step 2: Fetch the actual 3D SDF data using the CID
+            const sdfResponse = await fetch(`/api/proxy?cid=${cid}`);
+            const sdfText = await sdfResponse.text();
+            
+            // Step 3: Parse and Render
+            const moleculeData = parseSDF(sdfText);
+            if (moleculeData && basicScene) {
+                basicScene.remove(currentBasicMolecule); // Remove old one
+                currentBasicMolecule = createMoleculeFromSDF(moleculeData);
+                currentBasicMolecule.scale.set(moleculeScale, moleculeScale, moleculeScale);
+                basicScene.add(currentBasicMolecule);
+                
+                document.getElementById('basic-molecule-name-display').textContent = `${input.toUpperCase()}`;
+                document.getElementById('basic-molecule-details-display').textContent = `3D Structure loaded from PubChem (CID: ${cid})`;
+                closeModal('search-modal');
+            }
         }
-        
-        // If successful, continue with PubChem processing...
-        // (This rarely works in browser due to CORS)
-        
     } catch (error) {
-        console.log('PubChem API blocked (CORS), using local database');
-        
-        // Show helpful message about CORS
-        const suggestions = getSuggestions(input, 'basic');
-        if (suggestions.length > 0) {
-            alert(`PubChem API blocked by browser security (CORS).\n\nTry these available molecules:\n${suggestions.join(', ')}\n\nFor full PubChem access, deploy to a server with CORS proxy.`);
-        } else {
-            alert(`"${input}" not found in local database.\n\nAvailable molecules:\nwater, methane, co2, ammonia, benzene, ethanol, salt, glucose, caffeine, aspirin\n\nNote: PubChem API requires server deployment due to CORS restrictions.`);
-        }
+        alert("Found the molecule, but couldn't load the 3D shape.");
     } finally {
         searchButton.textContent = 'Search PubChem Database';
         searchButton.disabled = false;
@@ -971,36 +962,37 @@ async function searchMolecule() {
 
 async function searchBioMolecule() {
     const input = document.getElementById('bio-search-input').value.trim();
-    if (!input) {
-        alert('Please enter a biomolecule name');
-        return;
-    }
+    if (!input) return;
     
     const searchButton = document.querySelector('#bio-search-modal .search-button');
     searchButton.textContent = 'Searching...';
     searchButton.disabled = true;
-    
-    const localResult = searchLocalDatabase(input, 'bio');
-    if (localResult) {
-        loadLocalMolecule(localResult, 'bio');
-        searchButton.textContent = 'Search PubChem Database';
-        searchButton.disabled = false;
-        closeModal('bio-search-modal');
-        return;
-    }
-    
+
     try {
-        // Try PubChem (will likely fail due to CORS)
-        const nameResponse = await fetch(`https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/name/${encodeURIComponent(input)}/cids/JSON`);
-        if (!nameResponse.ok) throw new Error('CORS or not found');
+        const nameResponse = await fetch(`/api/proxy?name=${encodeURIComponent(input)}`);
+        const nameData = await nameResponse.json();
         
-    } catch (error) {
-        const suggestions = getSuggestions(input, 'bio');
-        if (suggestions.length > 0) {
-            alert(`PubChem API blocked by browser security (CORS).\n\nTry these available biomolecules:\n${suggestions.join(', ')}\n\nFor full PubChem access, deploy to a server.`);
-        } else {
-            alert(`"${input}" not found in local database.\n\nAvailable biomolecules:\nglucose, caffeine, aspirin, insulin, dopamine, serotonin, testosterone, morphine\n\nNote: Full PubChem integration requires server deployment.`);
+        if (nameData.IdentifierList && nameData.IdentifierList.CID) {
+            const cid = nameData.IdentifierList.CID[0];
+            
+            // Fetch 3D data via proxy
+            const sdfResponse = await fetch(`/api/proxy?cid=${cid}`);
+            const sdfText = await sdfResponse.text();
+            
+            const moleculeData = parseSDF(sdfText);
+            if (moleculeData && bioScene) {
+                bioScene.remove(currentBioMolecule); 
+                currentBioMolecule = createMoleculeFromSDF(moleculeData);
+                currentBioMolecule.scale.set(bioMoleculeScale, bioMoleculeScale, bioMoleculeScale);
+                bioScene.add(currentBioMolecule);
+                
+                document.getElementById('bio-molecule-name-display').textContent = `${input.toUpperCase()}`;
+                document.getElementById('bio-molecule-details-display').textContent = `Complex biological structure (CID: ${cid})`;
+                closeModal('bio-search-modal');
+            }
         }
+    } catch (error) {
+        alert("Error loading complex biomolecule data.");
     } finally {
         searchButton.textContent = 'Search PubChem Database';
         searchButton.disabled = false;
